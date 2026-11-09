@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#facc15">
+<link rel="manifest" href="manifest-garcom.json">
+<title>Garçom - MundoLimpo</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;font-family:system-ui}
+body{background:#0a0a0a;color:white}
+.header{background:#facc15;color:#000;padding:15px;font-weight:900;text-align:center;position:sticky;top:0;z-index:10}
+.mesas{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:12px}
+.mesa{border-radius:16px;padding:20px;text-align:center;font-weight:800;font-size:18px;border:2px solid #222}
+.livre{background:#1a1a1a;color:#666}
+.ocupada{background:#22c55e;color:#000;animation:pulse 1s infinite}
+.conta{background:#facc15;color:#000}
+.btn{width:100%;padding:18px;background:#facc15;color:#000;border:none;border-radius:12px;font-weight:900;font-size:18px;margin-top:10px}
+.produto{display:flex;gap:12px;padding:12px;border-bottom:1px solid #222;align-items:center}
+.produto img{width:60px;height:60px;border-radius:10px;object-fit:cover}
+@keyframes pulse{0%{transform:scale(1)}50%{transform:scale(1.02)}100%{transform:scale(1)}}
+#comanda{position:fixed;bottom:0;left:0;right:0;background:#111;padding:15px;border-top:2px solid #facc15;display:none;max-height:80vh;overflow:auto}
+</style>
+</head>
+<body>
+<div class="header">🍔 MUNDOLIMPO - GARÇOM</div>
+
+<div id="tela-mesas">
+  <div style="padding:12px"><input id="busca" placeholder="Buscar mesa..." style="width:100%;padding:14px;border-radius:10px;border:none;background:#1a1a1a;color:white"></div>
+  <div class="mesas" id="listaMesas"></div>
+</div>
+
+<div id="tela-produtos" style="display:none">
+  <div style="padding:12px;display:flex;gap:10px">
+    <button onclick="voltarMesas()" style="padding:12px 20px;background:#333;color:white;border:none;border-radius:8px">← Voltar</button>
+    <span id="tituloMesa" style="padding:12px;font-weight:900;font-size:18px"></span>
+  </div>
+  <div id="listaProdutos"></div>
+  <div style="height:120px"></div>
+</div>
+
+<div id="comanda">
+  <div style="display:flex;justify-content:space-between;align-items:center">
+    <h3 id="resumoMesa">Mesa 01</h3>
+    <button onclick="fecharComanda()" style="background:transparent;color:white;border:none;font-size:24px">×</button>
+  </div>
+  <div id="itensComanda" style="margin:10px 0"></div>
+  <div style="font-size:20px;font-weight:900">Total: R$ <span id="total">0,00</span></div>
+  <button class="btn" onclick="enviarCozinha()">🚀 ENVIAR PARA COZINHA</button>
+  <button class="btn" style="background:#333;color:white" onclick="fecharConta()">💰 FECHAR CONTA</button>
+</div>
+
+<script>
+// SIMULACAO DE DADOS - Conecte com seu Firebase/LocalStorage depois
+let mesaAtual = null;
+let carrinho = [];
+const produtos = [
+  {id:1,nome:"X-Burger Clássico",preco:28.90,foto:"https://images.unsplash.com/photo-1568909344668-6f14a07b56a0?w=100"},
+  {id:2,nome:"X-Salada",preco:32.90,foto:"https://images.unsplash.com/photo-1571091718767-18b5b1457add?w=100"},
+  {id:3,nome:"X-Bacon Especial",preco:36.90,foto:"https://images.unsplash.com/photo-1553979459-d2229ba7433b?w=100"},
+  {id:4,nome:"Batata Frita P",preco:18.90,foto:"https://images.unsplash.com/photo-1573080496219-bb080dd4f877?w=100"},
+  {id:5,nome:"Coca Lata",preco:6.00,foto:"https://images.unsplash.com/photo-1624552184280-9e9631bbeee9?w=100"},
+];
+
+function renderMesas(){
+  const cont = document.getElementById('listaMesas');
+  cont.innerHTML = '';
+  for(let i=1;i<=30;i++){
+    const status = i%3==0 ? 'ocupada' : i%5==0 ? 'conta' : 'livre';
+    const label = status=='ocupada' ? 'OCUPADA' : status=='conta' ? 'CONTA' : 'LIVRE';
+    cont.innerHTML += `<div class="mesa ${status}" onclick="abrirMesa(${i})">MESA ${String(i).padStart(2,'0')}<br><small>${label}</small></div>`;
+  }
+}
+
+function abrirMesa(num){
+  mesaAtual = num;
+  document.getElementById('tela-mesas').style.display='none';
+  document.getElementById('tela-produtos').style.display='block';
+  document.getElementById('tituloMesa').innerText = `MESA ${String(num).padStart(2,'0')}`;
+  renderProdutos();
+  document.getElementById('comanda').style.display='block';
+  carrinho = [];
+  atualizarComanda();
+}
+
+function voltarMesas(){
+  document.getElementById('tela-mesas').style.display='block';
+  document.getElementById('tela-produtos').style.display='none';
+  document.getElementById('comanda').style.display='none';
+}
+
+function renderProdutos(){
+  const cont = document.getElementById('listaProdutos');
+  cont.innerHTML = produtos.map(p=>`
+    <div class="produto" onclick="addItem(${p.id})">
+      <img src="${p.foto}">
+      <div style="flex:1"><b>${p.nome}</b><br>R$ ${p.preco.toFixed(2)}</div>
+      <div style="background:#facc15;color:#000;width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:900">+</div>
+    </div>
+  `).join('');
+}
+
+function addItem(id){
+  const prod = produtos.find(p=>p.id==id);
+  carrinho.push(prod);
+  atualizarComanda();
+  if(navigator.vibrate) navigator.vibrate(50);
+}
+
+function atualizarComanda(){
+  document.getElementById('resumoMesa').innerText = `MESA ${String(mesaAtual).padStart(2,'0')} - ${carrinho.length} itens`;
+  document.getElementById('itensComanda').innerHTML = carrinho.map((i,idx)=>`<div style="display:flex;justify-content:space-between;padding:6px 0"><span>${i.nome}</span><span>R$ ${i.preco.toFixed(2)} <b onclick="carrinho.splice(${idx},1);atualizarComanda()" style="color:red;margin-left:10px">×</b></span></div>`).join('');
+  const total = carrinho.reduce((s,i)=>s+i.preco,0);
+  document.getElementById('total').innerText = total.toFixed(2).replace('.',',');
+}
+
+function fecharComanda(){ document.getElementById('comanda').style.display='none'; }
+
+function enviarCozinha(){
+  const total = carrinho.reduce((s,i)=>s+i.preco,0);
+  // AQUI VOCÊ CONECTA COM SEU BACKEND / FIREBASE
+  // fetch('/api/pedidos', {method:'POST', body: JSON.stringify({mesa: mesaAtual, itens: carrinho, total})})
+  alert(`✅ Pedido da MESA ${String(mesaAtual).padStart(2,'0')} enviado para cozinha!\nTotal R$ ${total.toFixed(2)}\n\nNa versão final, isso vai imprimir automático na cozinha.`);
+  carrinho = [];
+  voltarMesas();
+}
+
+function fecharConta(){ alert('Função fechar conta - integra com seu módulo Caixa'); }
+
+renderMesas();
+
+// PWA Install
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.register('sw-garcom.js');
+}
+</script>
+</body>
+</html>
