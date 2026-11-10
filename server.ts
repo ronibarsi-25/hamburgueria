@@ -277,6 +277,406 @@ app.post('/api/webhook/simulate', async (req, res) => {
 });
 
 // ==========================================
+// Meta WhatsApp Cloud API & Webhook Endpoints
+// ==========================================
+interface WhatsAppConfig {
+  accessToken: string;
+  phoneNumberId: string;
+  wabaId: string;
+  verifyToken: string;
+  autoReply: boolean;
+  updatedAt?: string;
+}
+
+interface WhatsAppWebhookLog {
+  id: string;
+  timestamp: string;
+  direction: 'incoming' | 'outgoing';
+  from: string;
+  senderName?: string;
+  messageText: string;
+  replyText?: string;
+  status: 'received' | 'sent' | 'failed' | 'ignored';
+  error?: string;
+}
+
+const dataDir = path.resolve(__dirname, 'data');
+if (!fs.existsSync(dataDir)) {
+  fs.mkdirSync(dataDir, { recursive: true });
+}
+
+const whatsappConfigPath = path.resolve(dataDir, 'whatsapp_config.json');
+const whatsappLogs: WhatsAppWebhookLog[] = [];
+
+function loadWhatsAppConfig(): WhatsAppConfig {
+  try {
+    if (fs.existsSync(whatsappConfigPath)) {
+      const data = JSON.parse(fs.readFileSync(whatsappConfigPath, 'utf-8'));
+      return {
+        accessToken: data.accessToken || process.env.WHATSAPP_API_TOKEN || '',
+        phoneNumberId: data.phoneNumberId || process.env.WHATSAPP_PHONE_NUMBER_ID || '',
+        wabaId: data.wabaId || process.env.WHATSAPP_BUSINESS_ACCOUNT_ID || '',
+        verifyToken:
+          data.verifyToken || process.env.WHATSAPP_VERIFY_TOKEN || 'mari_burger_meta_webhook_2026',
+        autoReply: data.autoReply !== undefined ? data.autoReply : true,
+        updatedAt: data.updatedAt,
+      };
+    }
+  } catch (err) {
+    console.error('Erro ao ler whatsapp_config.json:', err);
+  }
+  return {
+    accessToken: process.env.WHATSAPP_API_TOKEN || '',
+    phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || '',
+    wabaId: process.env.WHATSAPP_BUSINESS_ACCOUNT_ID || '',
+    verifyToken: process.env.WHATSAPP_VERIFY_TOKEN || 'mari_burger_meta_webhook_2026',
+    autoReply: true,
+  };
+}
+
+function saveWhatsAppConfig(cfg: WhatsAppConfig) {
+  try {
+    fs.writeFileSync(whatsappConfigPath, JSON.stringify(cfg, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('Erro ao salvar whatsapp_config.json:', err);
+  }
+}
+
+// Function to send message via Meta WhatsApp Cloud API (Graph API)
+async function sendWhatsAppCloudMessage(
+  accessToken: string,
+  phoneNumberId: string,
+  to: string,
+  bodyText: string
+): Promise<{ success: boolean; response?: any; error?: string }> {
+  try {
+    const cleanPhone = to.replace(/\D/g, '');
+    const url = `https://graph.facebook.com/v21.0/${phoneNumberId}/messages`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to: cleanPhone,
+        type: 'text',
+        text: {
+          preview_url: true,
+          body: bodyText,
+        },
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      return {
+        success: false,
+        error: data?.error?.message || `HTTP ${res.status}: ${JSON.stringify(data)}`,
+      };
+    }
+    return { success: true, response: data };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Erro de rede ao conectar com Meta Graph API' };
+  }
+}
+
+// 1. Get WhatsApp Config
+app.get('/api/whatsapp/config', (req, res) => {
+  const cfg = loadWhatsAppConfig();
+  const host = req.get('host') || 'localhost:3000';
+  const protocol = req.protocol === 'https' || req.get('x-forwarded-proto') === 'https' ? 'https' : 'http';
+  const defaultWebhookUrl = `${protocol}://${host}/api/webhook/whatsapp`;
+
+  let maskedToken = '';
+  if (cfg.accessToken) {
+    if (cfg.accessToken.length > 12) {
+      maskedToken = `${cfg.accessToken.slice(0, 6)}...${cfg.accessToken.slice(-4)}`;
+    } else {
+      maskedToken = '******';
+    }
+  }
+
+  res.json({
+    hasToken: Boolean(cfg.accessToken && cfg.accessToken.trim().length > 0),
+    maskedToken,
+    phoneNumberId: cfg.phoneNumberId || '',
+    wabaId: cfg.wabaId || '',
+    verifyToken: cfg.verifyToken || 'mari_burger_meta_webhook_2026',
+    autoReply: cfg.autoReply !== false,
+    updatedAt: cfg.updatedAt || null,
+    webhookUrl: defaultWebhookUrl,
+  });
+});
+
+// 2. Save WhatsApp Config
+app.post('/api/whatsapp/config', (req, res) => {
+  try {
+    const { accessToken, phoneNumberId, wabaId, verifyToken, autoReply } = req.body;
+    const current = loadWhatsAppConfig();
+
+    let finalToken = current.accessToken;
+    // Only update token if a new, unmasked token was passed
+    if (typeof accessToken === 'string' && accessToken.trim().length > 0 && !accessToken.includes('...')) {
+      finalToken = accessToken.trim();
+    }
+
+    const updated: WhatsAppConfig = {
+      accessToken: finalToken,
+      phoneNumberId: typeof phoneNumberId === 'string' ? phoneNumberId.trim() : current.phoneNumberId,
+      wabaId: typeof wabaId === 'string' ? wabaId.trim() : current.wabaId,
+      verifyToken:
+        typeof verifyToken === 'string' && verifyToken.trim().length > 0
+          ? verifyToken.trim()
+          : current.verifyToken,
+      autoReply: autoReply !== undefined ? Boolean(autoReply) : current.autoReply,
+      updatedAt: new Date().toISOString(),
+    };
+
+    saveWhatsAppConfig(updated);
+    res.json({
+      success: true,
+      message: 'Configurações da Meta WhatsApp Cloud API salvas com sucesso!',
+      updatedAt: updated.updatedAt,
+    });
+  } catch (error: any) {
+    console.error('Erro ao salvar WhatsApp config:', error);
+    res.status(500).json({ error: 'Erro ao salvar configurações do WhatsApp' });
+  }
+});
+
+// 3. Test Meta Connection & Send Test Message
+app.post('/api/whatsapp/test', async (req, res) => {
+  try {
+    const { testPhone } = req.body;
+    const cfg = loadWhatsAppConfig();
+
+    if (!cfg.accessToken || !cfg.accessToken.trim()) {
+      return res.status(400).json({
+        success: false,
+        error: 'API Key / Access Token da Meta não configurado. Insira o token primeiro.',
+      });
+    }
+
+    if (!cfg.phoneNumberId || !cfg.phoneNumberId.trim()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Phone Number ID não configurado. Obtenha o ID no painel Meta for Developers.',
+      });
+    }
+
+    // If specific test phone provided, send test WhatsApp message
+    if (testPhone && typeof testPhone === 'string' && testPhone.trim().length > 0) {
+      const messageBody = `🍔 Mari Burger · Teste de Integração!\n\nOlá! Sua conexão com a Meta WhatsApp Cloud API está ativa e funcionando perfeitamente. Seus clientes já podem conversar diretamente com a Mari! 🚀\n\nHorário do teste: ${new Date().toLocaleTimeString('pt-BR')}`;
+      const sendResult = await sendWhatsAppCloudMessage(
+        cfg.accessToken,
+        cfg.phoneNumberId,
+        testPhone.trim(),
+        messageBody
+      );
+
+      if (!sendResult.success) {
+        return res.status(400).json({
+          success: false,
+          error: `Erro ao enviar mensagem de teste: ${sendResult.error}`,
+        });
+      }
+
+      whatsappLogs.unshift({
+        id: `test-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        direction: 'outgoing',
+        from: testPhone.trim(),
+        senderName: 'Teste do Sistema',
+        messageText: '[Mensagem de Teste Enviada]',
+        replyText: messageBody,
+        status: 'sent',
+      });
+
+      return res.json({
+        success: true,
+        message: `Mensagem de teste enviada com sucesso para o WhatsApp ${testPhone}! Verifique seu celular.`,
+        details: sendResult.response,
+      });
+    }
+
+    // Ping Meta Graph API endpoint for Phone Number ID validation
+    const pingUrl = `https://graph.facebook.com/v21.0/${cfg.phoneNumberId}?fields=verified_name,code_verification_status,display_phone_number,quality_rating`;
+    const pingRes = await fetch(pingUrl, {
+      headers: {
+        Authorization: `Bearer ${cfg.accessToken}`,
+      },
+    });
+
+    const pingData = await pingRes.json();
+    if (!pingRes.ok) {
+      return res.status(400).json({
+        success: false,
+        error: pingData?.error?.message || `Falha na autenticação da Meta (HTTP ${pingRes.status})`,
+        details: pingData,
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: `Conexão validada com sucesso com a Meta! Número: ${pingData.display_phone_number || cfg.phoneNumberId} (${pingData.verified_name || 'Conta Verificada'}).`,
+      details: pingData,
+    });
+  } catch (error: any) {
+    console.error('Erro no teste do WhatsApp:', error);
+    res.status(500).json({ success: false, error: error.message || 'Erro ao testar conexão' });
+  }
+});
+
+// 4. Meta Webhook Verification (GET)
+// Meta sends a GET request to verify the webhook challenge
+app.get('/api/webhook/whatsapp', (req, res) => {
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+  const cfg = loadWhatsAppConfig();
+
+  console.log(`[Meta Webhook] Verificação recebida. Modo: ${mode}, Token: ${token}`);
+
+  if (mode === 'subscribe' && token === cfg.verifyToken) {
+    console.log('[Meta Webhook] Verificado com sucesso pela Meta!');
+    return res.status(200).send(challenge);
+  }
+
+  console.warn('[Meta Webhook] Falha de verificação. Token esperado:', cfg.verifyToken, 'Recebido:', token);
+  return res.status(403).send('Forbidden: Token mismatch');
+});
+
+// 5. Meta Webhook Ingestion (POST)
+// Meta sends POST requests when customers message the WhatsApp number
+app.post('/api/webhook/whatsapp', async (req, res) => {
+  try {
+    const body = req.body;
+    const cfg = loadWhatsAppConfig();
+
+    // Acknowledge immediately to Meta to prevent timeout/retries
+    res.status(200).json({ status: 'EVENT_RECEIVED' });
+
+    // Check if this is a WhatsApp status or message event
+    if (body.object === 'whatsapp_business_account') {
+      const entries = body.entry || [];
+      for (const entry of entries) {
+        const changes = entry.changes || [];
+        for (const change of changes) {
+          const value = change.value;
+          if (value && value.messages && value.messages.length > 0) {
+            const contact = value.contacts && value.contacts[0];
+            const senderName = contact?.profile?.name || 'Cliente WhatsApp';
+
+            for (const message of value.messages) {
+              const from = message.from; // Customer WhatsApp number e.g. "5511999998888"
+              const messageId = message.id;
+
+              let userText = '';
+              if (message.type === 'text') {
+                userText = message.text?.body || '';
+              } else if (message.type === 'interactive' && message.interactive) {
+                userText =
+                  message.interactive.button_reply?.title ||
+                  message.interactive.list_reply?.title ||
+                  '';
+              } else if (message.type === 'button') {
+                userText = message.button?.text || '';
+              } else {
+                userText = `[Mensagem do tipo ${message.type}]`;
+              }
+
+              console.log(`[WhatsApp Webhook] Mensagem recebida de ${senderName} (${from}): "${userText}"`);
+
+              // Default restaurant config for Mari
+              const restaurantConfig: RestaurantConfig = {
+                restaurantName: 'Mari Burger Artesanal',
+                menuUrl: 'https://ais-dev-halbz5ua67x2txhdxr6io2-26837071600.us-west2.run.app',
+                neighborhoods: ['Centro', 'Jardins', 'Vila Nova', 'Bela Vista', 'Pinheiros', 'Moema'],
+                openingHours: 'Terça a Domingo, das 18h às 23h30',
+                isStoreOpen: true,
+              };
+
+              let replyText = '';
+              const systemInstruction = buildSystemInstruction(restaurantConfig);
+
+              if (ai) {
+                try {
+                  const aiResponse = await ai.models.generateContent({
+                    model: 'gemini-3.8-flash',
+                    contents: [{ role: 'user', parts: [{ text: userText }] }],
+                    config: { systemInstruction },
+                  });
+                  replyText = aiResponse.text || generateFallbackResponse(userText, restaurantConfig);
+                } catch (aiErr) {
+                  console.warn('Erro ao chamar Gemini no webhook:', aiErr);
+                  replyText = generateFallbackResponse(userText, restaurantConfig);
+                }
+              } else {
+                replyText = generateFallbackResponse(userText, restaurantConfig);
+              }
+
+              let dispatchStatus: 'received' | 'sent' | 'failed' | 'ignored' = 'received';
+              let dispatchError: string | undefined = undefined;
+
+              // If auto-reply is enabled and Meta credentials are configured, dispatch reply back to customer WhatsApp!
+              if (cfg.autoReply && cfg.accessToken && cfg.phoneNumberId) {
+                const sendResult = await sendWhatsAppCloudMessage(
+                  cfg.accessToken,
+                  cfg.phoneNumberId,
+                  from,
+                  replyText
+                );
+                if (sendResult.success) {
+                  dispatchStatus = 'sent';
+                  console.log(`[WhatsApp Webhook] Resposta enviada com sucesso para ${from}!`);
+                } else {
+                  dispatchStatus = 'failed';
+                  dispatchError = sendResult.error;
+                  console.error(`[WhatsApp Webhook] Falha ao enviar resposta para ${from}:`, sendResult.error);
+                }
+              }
+
+              // Record in live logs
+              whatsappLogs.unshift({
+                id: messageId || `msg-${Date.now()}`,
+                timestamp: new Date().toISOString(),
+                direction: 'incoming',
+                from,
+                senderName,
+                messageText: userText,
+                replyText,
+                status: dispatchStatus,
+                error: dispatchError,
+              });
+
+              // Keep max 100 logs
+              if (whatsappLogs.length > 100) {
+                whatsappLogs.pop();
+              }
+            }
+          }
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Erro ao processar webhook da Meta:', error);
+  }
+});
+
+// 6. Get Live Webhook Logs
+app.get('/api/whatsapp/logs', (_req, res) => {
+  res.json({ logs: whatsappLogs.slice(0, 50) });
+});
+
+// 7. Clear Webhook Logs
+app.post('/api/whatsapp/logs/clear', (_req, res) => {
+  whatsappLogs.length = 0;
+  res.json({ success: true, message: 'Logs de mensagens do WhatsApp limpos.' });
+});
+
+// ==========================================
 // Database Backup Endpoints (Filesystem Persistence)
 // ==========================================
 const backupDir = path.resolve(__dirname, 'data', 'backups');

@@ -1054,7 +1054,7 @@ export const DeliveryManager: React.FC<DeliveryManagerProps> = ({ config }) => {
                       <div className="pt-2 border-t border-stone-800/80 flex items-center justify-between text-[11px]">
                         <span className="text-stone-400">Total Consumido:</span>
                         <span className="font-mono font-bold text-emerald-400">
-                          R$ {c.totalSpent.toFixed(2)}
+                          R$ {(c.totalSpent || 0).toFixed(2)}
                         </span>
                       </div>
                     </div>

@@ -247,6 +247,13 @@ const BurgerAppContent: React.FC = () => {
       icon: Settings,
       badge: null,
     },
+    {
+      id: 'integration' as TabType,
+      label: 'Integrações',
+      icon: Terminal,
+      badge: 'Meta API',
+      badgeColor: 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40',
+    },
   ];
 
   return (
